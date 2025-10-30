@@ -1,6 +1,11 @@
 pipeline {
     agent any
 
+    environment {
+        IMAGE_NAME = 'flask-jenkins-app'
+        CONTAINER_NAME = 'flask-jenkins-container'
+    }
+
     triggers {
         githubPush()
         cron('H 6 * * *')
@@ -14,17 +19,26 @@ pipeline {
             }
         }
 
+        stage('Cleanup Old Containers') {
+            steps {
+                echo 'Stopping and removing old containers...'
+                sh '''
+                    docker ps -a -q --filter "name=$CONTAINER_NAME" | grep -q . && docker stop $CONTAINER_NAME && docker rm $CONTAINER_NAME || true
+                '''
+            }
+        }
+
         stage('Build Docker Image') {
             steps {
-                echo 'Building Docker image for new Flask app...'
-                sh 'docker build -t flask-jenkins-app .'
+                echo 'Building Docker image...'
+                sh 'docker build -t $IMAGE_NAME .'
             }
         }
 
         stage('Run Docker Container') {
             steps {
                 echo 'Starting new Flask container...'
-                sh 'docker run -d -p 5000:5000 --name flask-jenkins-container flask-jenkins-app'
+                sh 'docker run -d -p 5000:5000 --name $CONTAINER_NAME $IMAGE_NAME'
                 echo 'Container is running at http://localhost:5000'
             }
         }
@@ -32,8 +46,10 @@ pipeline {
         stage('Test Application') {
             steps {
                 echo 'Testing application response...'
-                sh 'sleep 5'
-                sh 'curl -f http://localhost:5000 || exit 1'
+                sh '''
+                    sleep 5
+                    curl -f http://localhost:5000 || (echo "App test failed!" && exit 1)
+                '''
             }
         }
 
@@ -46,11 +62,16 @@ pipeline {
 
     post {
         always {
-            echo 'Stopping and cleaning old containers...'
-            sh 'docker stop flask-jenkins-container || true'
-            sh 'docker rm flask-jenkins-container || true'
+            echo 'Cleaning workspace and stopping containers...'
+            sh '''
+                docker stop $CONTAINER_NAME || true
+                docker rm $CONTAINER_NAME || true
+            '''
             cleanWs()
-            echo 'Pipeline completed successfully.'
+            echo 'Pipeline completed.'
+        }
+        failure {
+            echo 'Pipeline failed. Check the Jenkins logs for details.'
         }
     }
 }
